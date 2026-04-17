@@ -1,0 +1,37 @@
+# API 运行时依赖（不含 ingestion/OCR/HuggingFace 重型栈）
+# 对应的完整依赖见 requirements.txt
+
+# Web
+fastapi==0.136.0
+uvicorn==0.44.0
+
+# LangChain / LangGraph 栈
+langchain==1.2.15
+langchain-core==1.2.30
+langchain-community==0.4.1
+langchain-openai==1.1.13
+langchain-milvus==0.3.3
+langchain-tavily==0.2.17
+langchain-text-splitters==1.1.1
+langgraph==1.1.6
+langgraph-checkpoint==4.0.2
+langgraph-prebuilt==1.0.9
+
+# Milvus 客户端
+pymilvus==2.6.12
+
+# OpenAI 兼容协议 + 工具依赖
+openai==2.32.0
+tiktoken==0.12.0
+
+# HTTP / 工具
+httpx==0.28.1
+requests==2.33.1
+
+# 数据校验
+pydantic==2.12.3
+pydantic-settings==2.13.1
+python-dotenv==1.2.2
+
+# 日志
+loguru==0.7.3

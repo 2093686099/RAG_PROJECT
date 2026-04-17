@@ -9,9 +9,9 @@ OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")
 
 QWEN_BASE_URL = os.getenv("QWEN_BASE_URL")
 
-MILVUS_URI = 'http://localhost:19530'
+MILVUS_URI = os.getenv("MILVUS_URI", "http://localhost:19530")
 
-COLLECTION_NAME = 't_collection01'
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "t_collection01")
 
 os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY")
 

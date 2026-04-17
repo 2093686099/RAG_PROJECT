@@ -1,0 +1,73 @@
+# 环境 / 秘钥 — .env 用 compose 的 env_file 装入，别打进镜像
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 运行产物
+logs/
+*.log
+output/
+.gradio/
+.gradio_cached_examples/
+
+# 数据 / ingestion 专用
+datas/
+test_vector/
+documents/
+debug_ui.py
+
+# 生成物
+graph2/graph_rag2.png
+graph/*.png
+
+# 文档 / 报告
+*.pptx
+*.md
+
+# 临时 / scratch
+test.py
+test.md
+2026-*-this-session-is-being-continued-from-a-previous-c.txt
+
+# git & 工具元数据
+.git
+.gitignore
+.planning/
+.claude/
+
+# 非 API 依赖清单
+requirements.txt
+
+# Docker 自身
+Dockerfile
+.dockerignore
+docker-compose.yml

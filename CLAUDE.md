@@ -22,15 +22,27 @@ python -m graph.graph1
 
 # Run the CLI-based Adaptive RAG graph (graph2 — route/grade/hallucination checks)
 python -m graph2.graph_2
+
+# Launch the Gradio debug UI (chat against graph2 locally)
+python debug_ui.py
+
+# Launch the FastAPI service (serves graph2 as HTTP)
+NO_PROXY=localhost,127.0.0.1 venv/bin/python -m uvicorn api.server:app --host 127.0.0.1 --port 8765
+
+# Dockerized API
+docker compose up --build
 ```
 
 Ingestion is incremental by default: `ensure_collection()` creates the collection if absent, and `get_existing_filenames()` skips files already loaded. Use `--rebuild` to drop and repopulate.
 
 ## Environment
 
-- `.env` provides `OPENAI_API_KEY`, `OPENAI_API_BASE`, `QWEN_BASE_URL`, `TAVILY_API_KEY`.
-- Hardcoded infra addresses live in `utils/env_utils.py`: Milvus URI (`MILVUS_URI = http://localhost:19530`), collection name (`COLLECTION_NAME = t_collection01`). Ollama embedding endpoint is in `llm_models/embeddings_model.py` (`http://100.112.63.27:11434`).
-- Chat LLM endpoint is in `llm_models/all_llm.py`: `http://127.0.0.1:8088/v1` (Cursor-forwarded tunnel to an internal llama.cpp serving `qwen3.5`).
+- `.env` provides:
+  - Legacy/internal: `OPENAI_API_KEY`, `OPENAI_API_BASE`, `QWEN_BASE_URL`, `TAVILY_API_KEY`.
+  - External API stack (used by `llm_models/api_llm.py` and the FastAPI service): `API_LLM_BASE_URL` / `API_LLM_API_KEY` / `API_LLM_MODEL` (glm-5 via tokenhub.tencentmaas.com), `API_EMBEDDING_BASE_URL` / `API_EMBEDDING_API_KEY` / `API_EMBEDDING_MODEL` (Qwen3-Embedding-8B via api-inference.modelscope.cn).
+- `utils/env_utils.py` reads `MILVUS_URI` (default `http://localhost:19530`) and `COLLECTION_NAME` (default `t_collection01`) from env, so `docker-compose.yml` overrides `MILVUS_URI=http://host.docker.internal:19530` to reach the host-local Milvus from inside the container.
+- Ollama embedding endpoint is in `llm_models/embeddings_model.py` (`http://100.112.63.27:11434`) — used only by ingestion.
+- Internal chat LLM endpoint is in `llm_models/all_llm.py`: `http://127.0.0.1:8088/v1` (Cursor-forwarded tunnel to an internal llama.cpp serving `qwen3.5`) — not used by the API path.
 - Key framework versions: `langchain-core 1.2.x`, `langchain-milvus 0.3.3`, `pymilvus 2.6.x`, `langgraph 1.1.x`.
 
 ## Architecture
@@ -38,8 +50,9 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 ### Core Layers
 
 **LLM & Embeddings** (`llm_models/`)
-- `all_llm.py` — exposes `model` and `llm` (both `ChatOpenAI` pointing at the llama.cpp tunnel). Also creates `web_search_tool` (TavilySearch).
-- `embeddings_model.py` — exposes `ollama_embeddings` (`qwen3-embedding:8b` via remote Ollama, accessed through the OpenAI-compatible `/v1/embeddings` endpoint).
+- `all_llm.py` — legacy/internal: exposes `model` and `llm` (both `ChatOpenAI` pointing at the llama.cpp tunnel). Also creates `web_search_tool` (TavilySearch). Used by graph1 / legacy ingestion.
+- `api_llm.py` — external API stack: exposes `model` (glm-5 via tokenhub.tencentmaas.com), `api_embeddings` (Qwen3-Embedding-8B via modelscope, dim=4096 — matches Milvus schema), and `web_search_tool`. All graph2 chains + the FastAPI service import from here.
+- `embeddings_model.py` — exposes `ollama_embeddings` (`qwen3-embedding:8b` via remote Ollama, accessed through the OpenAI-compatible `/v1/embeddings` endpoint). Used by ingestion only.
 
 **Document Parsing & Ingestion** (`documents/`)
 - `markdown_parser.py` — parses Markdown with `UnstructuredMarkdownLoader` in `elements` mode, merges title+content via `merge_title_content`, then applies `SemanticChunker` for chunks > 8000 chars.
@@ -55,7 +68,19 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 **LangGraph Workflows** — two self-correcting RAG pipelines:
 - `graph/` (Graph 1 — Corrective RAG): `agent_node` → tool retrieval → `grade_documents` → branch to `generate` or `rewrite` → END. Uses message-based `AgentState`.
-- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with explicit `question`/`documents`/`generation` fields.
+- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with `question` / `documents` / `generation` / `generate_retry_count` / `transform_count`. `generate_retry_count` caps hallucination retries at `MAX_GENERATE_RETRIES = 2` and falls back to `useful` to prevent infinite loops. All grader chains use `with_structured_output(..., method="function_calling")` because glm-5 doesn't support `json_schema` response format.
+
+**HTTP Service** (`api/`)
+- `api/schemas.py` — Pydantic models: `QueryRequest` (question), `QueryResponse` (answer + route + documents + error), `HealthResponse`.
+- `api/server.py` — FastAPI app. `GET /health` for liveness, `POST /query` streams graph2 to collect the full route and final `generation` + `documents` into a blocking JSON response. Sets `NO_PROXY=localhost,127.0.0.1` at import to bypass the macOS Clash/V2Ray proxy on 127.0.0.1:7890.
+
+**Debug UI**
+- `debug_ui.py` — Gradio `ChatInterface` wrapping graph2 with streaming trace. Same proxy workaround. Launch on port 7860.
+
+**Docker**
+- `Dockerfile` (python:3.12-slim + `requirements-api.txt`) — copies only API-path modules (`api`, `graph`, `graph2`, `llm_models`, `tools`, `utils`). Exposes port 8000.
+- `docker-compose.yml` — publishes `8765:8000`, mounts `.env` via `env_file`, injects `MILVUS_URI=http://host.docker.internal:19530` so the container reaches host-local Milvus.
+- `requirements-api.txt` — API-only subset (fastapi, langchain, langchain-openai, langchain-milvus, langgraph, pymilvus, etc.). No `unstructured`, `pypdfium2`, HuggingFace/torch.
 
 ### Data Flow
 
@@ -68,6 +93,8 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 - **`glm-ocr:bf16` crash**: Ollama needs `"options": {"num_ctx": 16384}` in the request payload, otherwise the model fails to load.
 - **`langchain-milvus 0.3.3` + `pymilvus 2.6.x` alias bug**: the `Milvus` wrapper's internal `MilvusClient` uses a random alias (`cm-xxx`), but `_extract_fields` accesses `Collection(using=alias)` via the ORM registry, which isn't populated. `milvus_db.py::create_connection()` monkey-patches `Milvus._extract_fields` to register the connection on first access.
 - **Ollama embedding input type**: LangChain tokenizes inputs before sending, but Ollama rejects token arrays. `embeddings_model.py` sets `check_embedding_ctx_length=False`.
+- **macOS system proxy hijacks localhost**: when Clash/V2Ray runs on `127.0.0.1:7890`, Python httpx reads `HTTPS_PROXY`/`HTTP_PROXY` from env and routes localhost through the proxy, breaking Gradio/uvicorn local HTTP. `debug_ui.py` and `api/server.py` both `os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")` before any import that could load httpx.
+- **glm-5 structured output**: the upstream gateway rejects `response_format=json_schema`. All `with_structured_output(...)` calls in graph2 pass `method="function_calling"`.
 
 ## Important Conventions
 

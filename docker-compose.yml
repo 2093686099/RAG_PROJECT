@@ -1,0 +1,23 @@
+services:
+  rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rag-graph2-api:latest
+    container_name: rag-graph2-api
+    env_file:
+      - .env
+    environment:
+      # 容器内访问宿主机 Milvus
+      MILVUS_URI: http://host.docker.internal:19530
+    ports:
+      - "8765:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
