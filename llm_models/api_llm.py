@@ -15,7 +15,7 @@ model = ChatOpenAI(
     api_key=API_LLM_API_KEY,
     model=API_LLM_MODEL,
     temperature=0,
-    timeout=30,
+    timeout=60,
     max_retries=2,
 )
 

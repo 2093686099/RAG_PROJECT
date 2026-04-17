@@ -28,6 +28,7 @@ def _format_docs_for_grading(documents):
 
 
 MAX_GENERATE_RETRIES = 2
+MAX_TRANSFORM_RETRIES = 1  # 问题重写后仍无相关文档，立即切 web_search 避免长循环烧 LLM
 
 
 def grade_generation_v_documents_and_questiono(state):
@@ -90,10 +91,10 @@ def decide_to_generate(state):
     transform_count = state.get("transform_count", 0)  # 获取转换次数，默认0
 
     if not filtered_documents:  # 如果没有相关文档
-        if transform_count >= 2:  # 如果转换次数超过2次
-            log.info("---所有文档都与问题无关，转换次数超过2次, 转为web查询---")
-            return "web_search"  # 重新优化问题
-        log.info("---没有相关文档, 重新优化问题---")
+        if transform_count >= MAX_TRANSFORM_RETRIES:
+            log.info(f"---重写后仍无相关文档 (transform_count={transform_count})，切换 web_search---")
+            return "web_search"
+        log.info(f"---没有相关文档，重写问题 (transform_count={transform_count})---")
         return "transform_query"
     else:  # 如果有相关文档
         log.info("---有相关文档, 生成回答---")
