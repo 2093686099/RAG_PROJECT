@@ -52,6 +52,11 @@ test.py
 test.md
 2026-*-this-session-is-being-continued-from-a-previous-c.txt
 
+# 私人资料 / 汇报材料
+/RAG+LangGraph+Milvus.md
+/RAG*.ppt
+/RAG*.pptx
+
 # 内部工具元数据
 .planning/
 .claude/
