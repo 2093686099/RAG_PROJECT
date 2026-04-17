@@ -1,0 +1,57 @@
+# 环境变量 / 秘钥
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 运行产物
+logs/
+*.log
+output/
+.gradio/
+.gradio_cached_examples/
+
+# 数据（源 PDF/MD/OCR 缓存、向量 dump 等，通常太大不入库）
+datas/
+test_vector/
+
+# 生成物
+graph2/graph_rag2.png
+graph/*.png
+
+# 临时 / scratch
+test.py
+test.md
+2026-*-this-session-is-being-continued-from-a-previous-c.txt
+
+# 内部工具元数据
+.planning/
+.claude/
