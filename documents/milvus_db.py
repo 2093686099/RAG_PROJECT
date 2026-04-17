@@ -4,7 +4,6 @@ from langchain_milvus import Milvus, BM25BuiltInFunction
 from pymilvus import MilvusClient, Function, connections
 from pymilvus.client.types import MetricType, IndexType, DataType, FunctionType
 
-from documents.markdown_parser import MarkdownParser
 from llm_models.embeddings_model import ollama_embeddings
 from utils.env_utils import MILVUS_URI, COLLECTION_NAME
 
@@ -142,6 +141,7 @@ class MilvusVectorSave:
 
 
 if __name__ == '__main__':
+    from documents.markdown_parser import MarkdownParser
     parser = MarkdownParser()
     docs = parser.parse_markdown_to_documents(r'F:\PycharmProjects\RAG_PROJECT\test.md')
 

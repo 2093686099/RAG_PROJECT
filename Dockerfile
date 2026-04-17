@@ -15,6 +15,7 @@ COPY requirements-api.txt ./
 RUN pip install -r requirements-api.txt
 
 COPY api ./api
+COPY documents ./documents
 COPY graph ./graph
 COPY graph2 ./graph2
 COPY llm_models ./llm_models

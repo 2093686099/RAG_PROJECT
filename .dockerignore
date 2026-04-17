@@ -42,7 +42,6 @@ output/
 # 数据 / ingestion 专用
 datas/
 test_vector/
-documents/
 debug_ui.py
 
 # 生成物
