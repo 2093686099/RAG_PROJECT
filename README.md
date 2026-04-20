@@ -2,13 +2,16 @@
 
 一个面向学术文献（当前领域：**铁死亡 / 三阴性乳腺癌 / TCGA-GEO 公共数据集分析 / LASSO 预后模型**）的 RAG 知识库。从 PDF 的 OCR 解析、结构化切分、混合检索一路做到 LangGraph 动态路由 + 自评估重写闭环，最终作为 FastAPI HTTP 服务以 Docker 形式交付给上游 ReAct Agent 调用。
 
+**私有化 / 内网友好**：入库链路（PDF OCR、文档 Embedding）完全跑在内网 Ollama 服务器上（视觉模型 `glm-ocr:bf16`、Embedding 模型 `qwen3-embedding:8b`），敏感语料不出内网；查询链路默认走外部 LLM API 以换取延迟，但架构允许替换为任意 OpenAI 兼容端点（本地 vLLM / llama.cpp 等），整条链都可以退化到零外网依赖的纯内网形态。
+
 ---
 
 ## 项目亮点
 
 ### 1. 向量库与部署架构
-- **Milvus 2.6.x** 作为向量数据库，通过 Docker 启动单节点实例即可运行；生产可横向扩展为多节点集群。
-- 整个 API 层（FastAPI + LangGraph）本身也通过 `Dockerfile` + `docker-compose.yml` 打包发布，容器内通过 `host.docker.internal` 访问宿主 Milvus，部署一条命令即可完成。
+- **Milvus 2.6.x** 作为向量数据库底座，开发期使用 standalone Docker 单节点；得益于 Milvus 原生的存储/计算分离架构，生产期可按数据规模平滑切换到分布式集群（多 query node / data node 横向扩展）而无需改动检索代码。
+- 所有操作统一收敛到 `MilvusClient` 连接抽象，`MILVUS_URI` 通过环境变量注入，实现「开发单节点 / 生产集群」的同源代码部署。
+- 整个 API 层（FastAPI + LangGraph）通过 `Dockerfile` + `docker-compose.yml` 打包发布，容器内通过 `host.docker.internal` 访问宿主 Milvus，一条 `docker compose up` 即可拉起服务；`requirements-api.txt` 对容器剥离了 `unstructured` / `pypdfium2` 等重依赖，镜像精简、冷启动快。
 
 ### 2. 文档解析与结构化
 - **PDF → 本地部署 `glm-ocr:bf16` 视觉模型（Ollama 承载）→ Markdown** 的 OCR 管线，输出带标题层级的结构化 Markdown，并落盘缓存为同名 `.md` 文件，二次入库直接走缓存跳过 OCR。
@@ -33,15 +36,21 @@
 | **graph / Graph 1 — Corrective RAG** | 消息态 Agent 风格 | `agent → retrieve → grade_documents →` 分支 `generate` / `rewrite` |
 | **graph2 / Graph 2 — Adaptive RAG** | 状态字典，生产主力 | `route_question →` 分支到 `retrieve` 或 `web_search` → `grade_documents → decide_to_generate → generate →` 幻觉检查 + 答案相关性打分 → 通过则结束，不通过则 `transform_query` 重写或再次 `generate` |
 
-- 路由节点由 LLM 结构化输出判定走**向量库**还是**网络搜索**。
-- `decide_to_generate` 在没有相关文档时先走查询重写；超过 `MAX_TRANSFORM_RETRIES=1` 后切到 web_search，避免在空库上无限循环烧 token。
+- **语义路由**：`route_question` 节点由 LLM 基于问题上下文做结构化判定 —— 属于知识库覆盖范畴的走 **Milvus 向量库**，开放域 / 实时问题走 **Tavily 网络搜索**，避免「所有问题一股脑塞进向量库」导致的空检索浪费。
+- **自适应降级**：`decide_to_generate` 在向量库没召回到相关文档时，先尝试 `transform_query` 对原问题做改写重试；超过 `MAX_TRANSFORM_RETRIES=1` 后自动切换到 web_search 分支兜底，避免在空库上无限循环烧 token。
 
-### 6. 闭环评估与纠错机制
-- **检索后评估**：`grade_documents` 对每个候选文档做二值相关性打分，不相关的直接过滤。
-- **生成后双重评估**：
-  - `hallucination_grader`：生成内容是否基于检索到的文档（防幻觉）。
-  - `answer_grader`：回答是否真正解决用户问题。
-- 幻觉检查不通过 → 最多重试 `MAX_GENERATE_RETRIES=2` 次；答案相关性不过关 → 走 `transform_query` 改写重试。
+### 6. 闭环评估与纠错机制（两层 LLM-as-Judge）
+
+在朴素 RAG「检索完直接喂给 LLM」的基础上，graph2 额外叠了两层评估节点，形成「检索→评估→生成→再评估→(重试/改写/兜底)」的自纠错闭环：
+
+- **第一层：检索后评估（内容筛选）**
+  - `grade_documents`：逐篇对召回文档做二值相关性打分（yes/no），**不相关的直接从上下文里剔除**，避免把噪声文档塞进 prompt 干扰生成。
+  - 若过滤后文档为空，触发 `transform_query` 改写问题重新检索；仍为空则切 web_search 兜底。
+- **第二层：生成后评估（答案把关）**
+  - `hallucination_grader`：判定生成答案是否**基于检索到的文档**（防止 LLM 编造）。不通过则 `generate` 节点重新生成，最多重试 `MAX_GENERATE_RETRIES=2` 次后放行，避免死循环。
+  - `answer_grader`：判定答案是否**真正解决了用户问题**。不通过则走 `transform_query` 改写问题并回到检索阶段。
+
+两层评估均使用 `with_structured_output(..., method="function_calling")` 产出结构化判定，保证判定结果稳定可编排，也规避了 glm-5 网关不支持 `json_schema` 的限制。
 
 ### 7. 接入上游 Agent
 - 项目以 **FastAPI 的 `POST /query`** 为统一入口，返回 `{answer, route, documents, error}`。
