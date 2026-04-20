@@ -2,7 +2,6 @@ import base64
 import json
 import os
 import subprocess
-import tempfile
 from io import BytesIO
 from typing import List
 
@@ -19,8 +18,8 @@ class PDFParser:
     PDF -> 逐页渲染图片 -> glm-ocr识别为Markdown -> 复用MarkdownParser切割管道
     """
 
-    OLLAMA_URL = "http://localhost:11434/api/chat"
-    OCR_MODEL = "dhiltgen/glm-ocr:bf16"
+    OLLAMA_URL = "http://localhost:11434/api/generate"
+    OCR_MODEL = "glm-ocr:bf16"
     RENDER_SCALE = 200 / 72  # 200DPI，A4约3.87M像素，远低于模型9.6M上限
     OCR_TIMEOUT = 120  # 单页OCR超时秒数
 
@@ -51,11 +50,8 @@ class PDFParser:
 
         payload = json.dumps({
             "model": self.OCR_MODEL,
-            "messages": [{
-                "role": "user",
-                "content": "请对这张图片进行OCR识别，输出结构化的Markdown格式文本。保留标题层级、段落结构和表格。",
-                "images": [base64_str]
-            }],
+            "prompt": "Text Recognition:\n请对这张图片进行OCR识别，输出结构化的Markdown格式文本。保留标题层级、段落结构和表格。",
+            "images": [base64_str],
             "stream": False,
             "options": {"num_ctx": 16384}
         })
@@ -73,7 +69,7 @@ class PDFParser:
             if "error" in data:
                 log.error(f"第{page_num}页OCR模型错误: {data['error']}")
                 return ""
-            content = data["message"]["content"]
+            content = data["response"]
             log.info(f"第{page_num}页OCR完成，输出{len(content)}字符")
             return content
         except Exception as e:

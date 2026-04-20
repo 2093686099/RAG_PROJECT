@@ -59,7 +59,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 **Document Parsing & Ingestion** (`documents/`)
 - `markdown_parser.py` — parses Markdown with `UnstructuredMarkdownLoader` in `elements` mode, merges title+content via `merge_title_content`, then applies `SemanticChunker` for chunks > 8000 chars.
-- `pdf_parser.py` — OCR pipeline: `pypdfium2` renders each page → local `dhiltgen/glm-ocr:bf16` on `localhost:11434` (via `curl --noproxy localhost` subprocess) produces Markdown → writes to a same-name `.md` next to the PDF (acts as OCR cache) → reuses `MarkdownParser` for chunking.
+- `pdf_parser.py` — OCR pipeline: `pypdfium2` renders each page → local official `glm-ocr:bf16` on `localhost:11434` (via `curl --noproxy localhost` subprocess hitting Ollama `/api/generate`) produces Markdown → writes to a same-name `.md` next to the PDF (acts as OCR cache) → reuses `MarkdownParser` for chunking.
 - `milvus_db.py` — `MilvusVectorSave` manages a Milvus collection with dense (HNSW, dim=4096) + sparse BM25 (standard tokenizer + lowercase + English stopwords) vectors. Key methods: `create_collection()` (destructive rebuild), `ensure_collection()` (non-destructive), `create_connection()`, `add_documents()`, `get_existing_filenames()`.
 - `write_milvus.py` / `write_pdf_milvus.py` — multi-process producer-consumer pipelines with `--rebuild` / `--dir` CLI flags.
 
@@ -87,13 +87,14 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 ### Data Flow
 
-1. PDFs → OCR (`dhiltgen/glm-ocr:bf16` on local Ollama) → Markdown cache → element extraction → title-content merge → semantic chunking → Milvus (dense + sparse).
+1. PDFs → OCR (`glm-ocr:bf16` on local Ollama) → Markdown cache → element extraction → title-content merge → semantic chunking → Milvus (dense + sparse).
 2. User query → agent / graph → Milvus hybrid retrieval (RRF) → (grading / rewrite loop) → generation → response.
 
 ## Known Workarounds
 
 - **httpx + internal tunnel**: all Python HTTP libraries return 502 against the remote Ollama server. Both `all_llm.py` and `embeddings_model.py` force IPv4 via `httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0"))`. For OCR (`pdf_parser.py`) we bypass Python HTTP entirely and shell out to `curl`.
-- **`glm-ocr:bf16` crash**: Ollama needs `"options": {"num_ctx": 16384}` in the request payload, otherwise the model fails to load.
+- **community `dhiltgen/glm-ocr:bf16` incompatibility**: this package crashes on the current local Ollama runtime. Use the official `glm-ocr:bf16` model instead.
+- **official `glm-ocr:bf16` request shape**: OCR should call Ollama `/api/generate` with top-level `images` and include `"options": {"num_ctx": 16384}` for image requests.
 - **`langchain-milvus 0.3.3` + `pymilvus 2.6.x` alias bug**: the `Milvus` wrapper's internal `MilvusClient` uses a random alias (`cm-xxx`), but `_extract_fields` accesses `Collection(using=alias)` via the ORM registry, which isn't populated. `milvus_db.py::create_connection()` monkey-patches `Milvus._extract_fields` to register the connection on first access.
 - **Ollama embedding input type**: LangChain tokenizes inputs before sending, but Ollama rejects token arrays. `embeddings_model.py` sets `check_embedding_ctx_length=False`.
 - **macOS system proxy hijacks localhost**: when Clash/V2Ray runs on `127.0.0.1:7890`, Python httpx reads `HTTPS_PROXY`/`HTTP_PROXY` from env and routes localhost through the proxy, breaking Gradio/uvicorn local HTTP. `debug_ui.py` and `api/server.py` both `os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")` before any import that could load httpx.

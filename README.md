@@ -2,7 +2,7 @@
 
 一个面向学术文献（当前领域：**铁死亡 / 三阴性乳腺癌 / TCGA-GEO 公共数据集分析 / LASSO 预后模型**）的 RAG 知识库。从 PDF 的 OCR 解析、结构化切分、混合检索一路做到 LangGraph 动态路由 + 自评估重写闭环，最终作为 FastAPI HTTP 服务以 Docker 形式交付给上游 ReAct Agent 调用。
 
-**私有化 / 本地友好**：入库链路（PDF OCR、文档 Embedding）完全跑在本地 Ollama 上（视觉模型 `dhiltgen/glm-ocr:bf16`、Embedding 模型 `dengcao/Qwen3-Embedding-8B:Q4_K_M`），敏感语料不出本机；查询链路默认走外部 LLM API 以换取延迟，但架构允许替换为任意 OpenAI 兼容端点（本地 vLLM / llama.cpp 等），整条链都可以退化到零外网依赖的纯本地形态。
+**私有化 / 本地友好**：入库链路（PDF OCR、文档 Embedding）完全跑在本地 Ollama 上（视觉模型 `glm-ocr:bf16`、Embedding 模型 `dengcao/Qwen3-Embedding-8B:Q4_K_M`），敏感语料不出本机；查询链路默认走外部 LLM API 以换取延迟，但架构允许替换为任意 OpenAI 兼容端点（本地 vLLM / llama.cpp 等），整条链都可以退化到零外网依赖的纯本地形态。
 
 ---
 
@@ -67,7 +67,7 @@
 | RAG | Milvus 2.6.x（Dense HNSW + Sparse BM25）、`langchain-milvus` 0.3.3 |
 | LLM | glm-5（tokenhub.tencentmaas.com，外部 API） |
 | Embedding | Qwen3-Embedding-8B（ModelScope API / 本地 Ollama 两路） |
-| OCR | `dhiltgen/glm-ocr:bf16`（本地 Ollama） |
+| OCR | `glm-ocr:bf16`（本地 Ollama） |
 | 文档解析 | `pypdfium2` + `unstructured` + `SemanticChunker` |
 | 服务 | FastAPI + Uvicorn、Gradio（调试 UI） |
 | 部署 | Docker、docker-compose |
@@ -310,7 +310,8 @@ async def query_knowledge_base(question: str) -> tuple[str, dict]:
 | 现象 | 解决 |
 |---|---|
 | `httpx` 连内网 Ollama 全部返回 502 | 强制 IPv4（`HTTPTransport(local_address="0.0.0.0")`）；OCR 路径直接 `subprocess.run(["curl", ...])` 绕开 Python HTTP 层 |
-| `glm-ocr:bf16` 加载失败 | 请求 payload 必须带 `"options": {"num_ctx": 16384}` |
+| 社区版 `dhiltgen/glm-ocr:bf16` 无法稳定加载 | 改用官方 `glm-ocr:bf16` |
+| 官方 `glm-ocr:bf16` OCR 无返回 | 走 `/api/generate`，并把图片放在顶层 `images` 字段；图像请求同时带 `"options": {"num_ctx": 16384}` |
 | `langchain-milvus 0.3.3` + `pymilvus 2.6.x` `_extract_fields` 报 alias 未注册 | `milvus_db.py::create_connection` 做 monkey-patch，首次访问前补注册 |
 | macOS Clash 劫持 localhost | 所有入口脚本 `os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")` |
 | glm-5 gateway 不支持 `response_format=json_schema` | 所有 `with_structured_output(...)` 传 `method="function_calling"` |
