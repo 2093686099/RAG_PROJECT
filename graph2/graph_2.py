@@ -10,6 +10,7 @@ from graph2.grade_answer_chain import answer_grader_chain
 from graph2.grade_documents_node import grade_documents
 from graph2.grade_hallucinations_chain import hallucination_grader_chain
 from graph2.graph_state import GraphState
+from graph2.prepare_retrieval_query_node import prepare_retrieval_query
 from graph2.query_route_chain import question_router_chain
 from graph2.retriever_node import retrieve
 from graph2.transform_query_node import transform_query
@@ -128,6 +129,7 @@ workflow = StateGraph(GraphState)
 
 # 定义个状态节点
 workflow.add_node("web_search", web_search)  # 网络搜索节点
+workflow.add_node("prepare_retrieval_query", prepare_retrieval_query)  # 检索查询准备节点
 workflow.add_node("retrieve", retrieve)  # 文档检索节点
 workflow.add_node("grade_documents", grade_documents)  # 文档评分节点
 workflow.add_node("generate", generate)  # 回答生成节点
@@ -139,12 +141,13 @@ workflow.add_conditional_edges(
     route_question,
     {
         "web_search": "web_search",
-        "retrieve": "retrieve",
+        "retrieve": "prepare_retrieval_query",
     },
 )
 
 # 添加固定边
 workflow.add_edge("web_search", "generate")
+workflow.add_edge("prepare_retrieval_query", "retrieve")
 workflow.add_edge("retrieve", "grade_documents")
 
 # 文档评估后的条件分支
@@ -168,7 +171,7 @@ workflow.add_edge("transform_query", "retrieve")  # 查询优化后重新检索�
 
 graph = workflow.compile()
 
-# draw_graph(graph, 'graph_rag2.png')
+draw_graph(graph, 'graph_rag2.png')
 
 if __name__ == '__main__':
     _printed = set()
