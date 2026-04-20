@@ -34,11 +34,11 @@
 | Graph | 定位 | 流程 |
 |---|---|---|
 | **graph / Graph 1 — Corrective RAG** | 消息态 Agent 风格 | `agent → retrieve → grade_documents →` 分支 `generate` / `rewrite` |
-| **graph2 / Graph 2 — Adaptive RAG** | 状态字典，生产主力 | `route_question →` 分支到 `retrieve` 或 `web_search` → `grade_documents → decide_to_generate → generate →` 幻觉检查 + 答案相关性打分 → 通过则结束，不通过则 `transform_query` 重写或再次 `generate` |
+| **graph2 / Graph 2 — Adaptive RAG** | 状态字典，生产主力 | `route_question →` 分支到 `prepare_retrieval_query` 或 `web_search` → `retrieve → grade_documents → decide_to_generate → generate →` 幻觉检查 + 答案相关性打分 → 通过则结束，不通过则 `transform_query` 重写检索 query 或再次 `generate` |
 
 - **语义路由**：`route_question` 节点由 LLM 基于问题上下文做结构化判定 —— 属于知识库覆盖范畴的走 **Milvus 向量库**，开放域 / 实时问题走 **Tavily 网络搜索**，避免「所有问题一股脑塞进向量库」导致的空检索浪费。
-- **中英文查询适配**：知识库语料为英文文献，`retrieve` 节点在检索前通过 LLM 将用户的中文问题自动译为英文（保留基因名、数据集编号等专有名词），检索完成后仍以原始中文问题驱动后续生成，实现「中文问、英文库」的无缝衔接。
-- **自适应降级**：`decide_to_generate` 在向量库没召回到相关文档时，先尝试 `transform_query` 对原问题做改写重试；超过 `MAX_TRANSFORM_RETRIES=1` 后自动切换到 web_search 分支兜底，避免在空库上无限循环烧 token。
+- **中英文查询适配**：知识库语料偏英文时，`prepare_retrieval_query` 会先生成英文检索 query，同时保留原始 `question` 给路由、生成和答案评估使用；`retrieve` 会优先查英文 query，并在 query 发生变化时补查原始问题，再做去重合并。
+- **自适应降级**：`decide_to_generate` 在向量库没召回到相关文档时，先尝试 `transform_query` 优化 `retrieval_query` 后重试；超过 `MAX_TRANSFORM_RETRIES=1` 后自动切换到 web_search 分支兜底，避免在空库上无限循环烧 token。
 
 ### 6. 闭环评估与纠错机制（两层 LLM-as-Judge）
 
@@ -84,7 +84,8 @@ RAG_PROJECT/
 ├── graph/                  # Graph 1: Corrective RAG (CLI)
 ├── graph2/                 # Graph 2: Adaptive RAG (生产路径)
 │   ├── graph_2.py          # 主入口，编排所有节点
-│   ├── retriever_node.py   # Milvus 混合检索
+│   ├── prepare_retrieval_query_node.py # 生成英文检索 query
+│   ├── retriever_node.py   # Milvus 混合检索 + 双路召回去重
 │   ├── grade_documents_node.py
 │   ├── generate_node.py
 │   ├── transform_query_node.py
@@ -212,6 +213,14 @@ python -m graph2.graph_2     # Adaptive RAG（主力）
 ```
 
 输入问题回车，图结构会 `graph.stream` 出每个节点的产物。输入 `q` 退出。
+
+如需更新 `graph2/graph_rag2.png`，可在 Python 里手动执行：
+
+```python
+from graph2.graph_2 import export_graph_png
+
+export_graph_png()
+```
 
 ### E. Gradio 调试 UI
 

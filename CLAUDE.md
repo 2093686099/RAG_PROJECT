@@ -23,6 +23,9 @@ python -m graph.graph1
 # Run the CLI-based Adaptive RAG graph (graph2 — route/grade/hallucination checks)
 python -m graph2.graph_2
 
+# Export the graph2 PNG manually when needed
+python -c "from graph2.graph_2 import export_graph_png; export_graph_png()"
+
 # Launch the Gradio debug UI (chat against graph2 locally)
 python debug_ui.py
 
@@ -68,7 +71,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 **LangGraph Workflows** — two self-correcting RAG pipelines:
 - `graph/` (Graph 1 — Corrective RAG): `agent_node` → tool retrieval → `grade_documents` → branch to `generate` or `rewrite` → END. Uses message-based `AgentState`.
-- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with `question` / `documents` / `generation` / `generate_retry_count` / `transform_count`. `generate_retry_count` caps hallucination retries at `MAX_GENERATE_RETRIES = 2` and falls back to `useful` to prevent infinite loops. All grader chains use `with_structured_output(..., method="function_calling")` because glm-5 doesn't support `json_schema` response format. The `retrieve` node translates Chinese queries to English via LLM before hitting Milvus (corpus is English-only), keeping `state["question"]` in Chinese for downstream generation.
+- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `prepare_retrieval_query` → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with `question` / `retrieval_query` / `documents` / `generation` / `generate_retry_count` / `transform_count`. `prepare_retrieval_query` generates an English-oriented retrieval query when useful but keeps the original `question` unchanged for routing, generation, and answer grading. `retrieve` does dual recall when `retrieval_query != question`: first the translated/optimized query, then the original question, followed by deduplication. `transform_query` rewrites `retrieval_query` rather than overwriting `question`. `generate_retry_count` caps hallucination retries at `MAX_GENERATE_RETRIES = 2` and falls back to `useful` to prevent infinite loops. All grader chains use `with_structured_output(..., method="function_calling")` because glm-5 doesn't support `json_schema` response format.
 
 **HTTP Service** (`api/`)
 - `api/schemas.py` — Pydantic models: `QueryRequest` (question), `QueryResponse` (answer + route + documents + error), `HealthResponse`.
@@ -95,6 +98,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 - **Ollama embedding input type**: LangChain tokenizes inputs before sending, but Ollama rejects token arrays. `embeddings_model.py` sets `check_embedding_ctx_length=False`.
 - **macOS system proxy hijacks localhost**: when Clash/V2Ray runs on `127.0.0.1:7890`, Python httpx reads `HTTPS_PROXY`/`HTTP_PROXY` from env and routes localhost through the proxy, breaking Gradio/uvicorn local HTTP. `debug_ui.py` and `api/server.py` both `os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")` before any import that could load httpx.
 - **glm-5 structured output**: the upstream gateway rejects `response_format=json_schema`. All `with_structured_output(...)` calls in graph2 pass `method="function_calling"`.
+- **graph2 PNG export is manual**: `graph2.graph_2` no longer auto-renders `graph_rag2.png` on import/run. Call `export_graph_png()` explicitly when the diagram needs refreshing.
 
 ## Important Conventions
 
