@@ -4,7 +4,6 @@ from pprint import pprint
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
 
-from graph.draw_png import draw_graph
 from graph2.generate_node import generate
 from graph2.grade_answer_chain import answer_grader_chain
 from graph2.grade_documents_node import grade_documents
@@ -17,6 +16,17 @@ from graph2.transform_query_node import transform_query
 from graph2.web_search_node import web_search
 from utils.log_utils import log
 from utils.print_utils import _print_event
+
+
+def export_graph_png():
+    """按需导出流程图，默认不自动执行。"""
+    try:
+        from graph.draw_png import draw_graph
+    except ModuleNotFoundError as exc:
+        log.warning(f"---跳过流程图导出: {exc}---")
+        return
+
+    draw_graph(graph, 'graph_rag2.png')
 
 
 def _format_docs_for_grading(documents):
@@ -170,8 +180,6 @@ workflow.add_conditional_edges(
 workflow.add_edge("transform_query", "retrieve")  # 查询优化后重新检索文档
 
 graph = workflow.compile()
-
-draw_graph(graph, 'graph_rag2.png')
 
 if __name__ == '__main__':
     _printed = set()

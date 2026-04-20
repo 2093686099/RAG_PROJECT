@@ -1,5 +1,23 @@
+from langchain_core.documents import Document
+
 from tools.retriever_tools import retriever
 from utils.log_utils import log
+
+
+def _dedupe_documents(documents: list[Document]) -> list[Document]:
+    """按来源和内容去重，避免双路召回返回重复片段。"""
+    deduped_documents = []
+    seen = set()
+
+    for document in documents:
+        source = document.metadata.get("source", "")
+        key = (source, document.page_content)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_documents.append(document)
+
+    return deduped_documents
 
 
 def retrieve(state):
@@ -18,4 +36,9 @@ def retrieve(state):
     log.info(f"---当前检索查询: {retrieval_query}---")
 
     documents = retriever.invoke(retrieval_query)
+    if retrieval_query != question:
+        log.info("---追加原始问题召回，合并中英双路结果---")
+        documents.extend(retriever.invoke(question))
+        documents = _dedupe_documents(documents)
+
     return {"documents": documents, "question": question, "retrieval_query": retrieval_query}
