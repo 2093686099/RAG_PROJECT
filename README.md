@@ -2,7 +2,7 @@
 
 一个面向学术文献（当前领域：**铁死亡 / 三阴性乳腺癌 / TCGA-GEO 公共数据集分析 / LASSO 预后模型**）的 RAG 知识库。从 PDF 的 OCR 解析、结构化切分、混合检索一路做到 LangGraph 动态路由 + 自评估重写闭环，最终作为 FastAPI HTTP 服务以 Docker 形式交付给上游 ReAct Agent 调用。
 
-**私有化 / 内网友好**：入库链路（PDF OCR、文档 Embedding）完全跑在内网 Ollama 服务器上（视觉模型 `glm-ocr:bf16`、Embedding 模型 `qwen3-embedding:8b`），敏感语料不出内网；查询链路默认走外部 LLM API 以换取延迟，但架构允许替换为任意 OpenAI 兼容端点（本地 vLLM / llama.cpp 等），整条链都可以退化到零外网依赖的纯内网形态。
+**私有化 / 本地友好**：入库链路（PDF OCR、文档 Embedding）完全跑在本地 Ollama 上（视觉模型 `dhiltgen/glm-ocr:bf16`、Embedding 模型 `dengcao/Qwen3-Embedding-8B:Q4_K_M`），敏感语料不出本机；查询链路默认走外部 LLM API 以换取延迟，但架构允许替换为任意 OpenAI 兼容端点（本地 vLLM / llama.cpp 等），整条链都可以退化到零外网依赖的纯本地形态。
 
 ---
 
@@ -23,8 +23,8 @@
 - 组合策略兼顾语义完整度与单块粒度，缓解跨页断裂和表格割裂问题。
 
 ### 4. 混合检索与索引调优
-- 同一个 Milvus collection 里同时建 **Dense（HNSW, dim=4096, M=16, efConstruction=64）** 和 **Sparse BM25（jieba + cnalphanumonly filter）** 两路索引。
-- 稠密向量使用 `qwen3-embedding:8b`（Ollama 部署，内部通过 OpenAI 兼容协议调用）。
+- 同一个 Milvus collection 里同时建 **Dense（HNSW, dim=4096, M=16, efConstruction=64）** 和 **Sparse BM25（standard tokenizer + lowercase + 英文停用词过滤）** 两路索引。
+- 稠密向量使用 `dengcao/Qwen3-Embedding-8B:Q4_K_M`（本地 Ollama 部署，通过 OpenAI 兼容协议调用）。
 - 稀疏检索走 Milvus 内建的 `BM25BuiltInFunction`，索引算法 **DAAT_MAXSCORE**，`bm25_k1=1.6`, `bm25_b=0.75`。
 - 检索阶段使用 **RRF（Reciprocal Rank Fusion）** 融合两路结果，`k=5`，只返 `category == 'content'` 字段。
 
@@ -37,6 +37,7 @@
 | **graph2 / Graph 2 — Adaptive RAG** | 状态字典，生产主力 | `route_question →` 分支到 `retrieve` 或 `web_search` → `grade_documents → decide_to_generate → generate →` 幻觉检查 + 答案相关性打分 → 通过则结束，不通过则 `transform_query` 重写或再次 `generate` |
 
 - **语义路由**：`route_question` 节点由 LLM 基于问题上下文做结构化判定 —— 属于知识库覆盖范畴的走 **Milvus 向量库**，开放域 / 实时问题走 **Tavily 网络搜索**，避免「所有问题一股脑塞进向量库」导致的空检索浪费。
+- **中英文查询适配**：知识库语料为英文文献，`retrieve` 节点在检索前通过 LLM 将用户的中文问题自动译为英文（保留基因名、数据集编号等专有名词），检索完成后仍以原始中文问题驱动后续生成，实现「中文问、英文库」的无缝衔接。
 - **自适应降级**：`decide_to_generate` 在向量库没召回到相关文档时，先尝试 `transform_query` 对原问题做改写重试；超过 `MAX_TRANSFORM_RETRIES=1` 后自动切换到 web_search 分支兜底，避免在空库上无限循环烧 token。
 
 ### 6. 闭环评估与纠错机制（两层 LLM-as-Judge）
@@ -66,7 +67,7 @@
 | RAG | Milvus 2.6.x（Dense HNSW + Sparse BM25）、`langchain-milvus` 0.3.3 |
 | LLM | glm-5（tokenhub.tencentmaas.com，外部 API） |
 | Embedding | Qwen3-Embedding-8B（ModelScope API / 本地 Ollama 两路） |
-| OCR | `glm-ocr:bf16`（Ollama 私有部署） |
+| OCR | `dhiltgen/glm-ocr:bf16`（本地 Ollama） |
 | 文档解析 | `pypdfium2` + `unstructured` + `SemanticChunker` |
 | 服务 | FastAPI + Uvicorn、Gradio（调试 UI） |
 | 部署 | Docker、docker-compose |
@@ -102,7 +103,7 @@ RAG_PROJECT/
 ├── llm_models/
 │   ├── api_llm.py          # 外部 API：glm-5 + Qwen3-Embedding-8B + Tavily
 │   ├── all_llm.py          # 内网 llama.cpp 通道（legacy/CLI）
-│   └── embeddings_model.py # Ollama qwen3-embedding:8b
+│   └── embeddings_model.py # 本地 Ollama Qwen3-Embedding-8B:Q4_K_M（入库用）
 ├── utils/                  # 日志 / env / 打印辅助
 ├── datas/                  # 语料目录
 │   ├── pdf/                # 原始 PDF
@@ -311,6 +312,6 @@ async def query_knowledge_base(question: str) -> tuple[str, dict]:
 ## 开发约定
 
 - 所有注释与日志字符串使用中文；日志统一走 `utils.log_utils.log`（loguru）。
-- Milvus schema 中文本字段最大 6000 字符，超出部分由 `SemanticChunker` 切；jieba 分词 + `cnalphanumonly` filter。
+- Milvus schema 中文本字段最大 6000 字符，超出部分由 `SemanticChunker` 切；BM25 使用 `standard` tokenizer + `lowercase` + 英文停用词过滤，针对英文生物医学语料优化精确率。
 - Document metadata 中 `category` 用来区分 `Title` / `content` / `NarrativeText`；检索端只取 `content`，保证返给 LLM 的是合并后的标题-内容块，而不是孤立标题。
 - 新增节点或 chain 优先放进 `graph2/`，graph1 作为对比/演示保留。

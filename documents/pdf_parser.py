@@ -19,8 +19,8 @@ class PDFParser:
     PDF -> 逐页渲染图片 -> glm-ocr识别为Markdown -> 复用MarkdownParser切割管道
     """
 
-    OLLAMA_URL = "http://100.112.63.27:11434/api/chat"
-    OCR_MODEL = "glm-ocr:bf16"
+    OLLAMA_URL = "http://localhost:11434/api/chat"
+    OCR_MODEL = "dhiltgen/glm-ocr:bf16"
     RENDER_SCALE = 200 / 72  # 200DPI，A4约3.87M像素，远低于模型9.6M上限
     OCR_TIMEOUT = 120  # 单页OCR超时秒数
 
@@ -62,7 +62,7 @@ class PDFParser:
 
         try:
             result = subprocess.run(
-                ["curl", "-s", "--max-time", str(self.OCR_TIMEOUT),
+                ["curl", "-s", "--noproxy", "localhost", "--max-time", str(self.OCR_TIMEOUT),
                  self.OLLAMA_URL, "-d", "@-", "-H", "Content-Type: application/json"],
                 input=payload, capture_output=True, text=True
             )

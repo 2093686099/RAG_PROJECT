@@ -26,7 +26,7 @@ class MilvusVectorSave:
         schema = client.create_schema()
         schema.add_field(field_name='id', datatype=DataType.INT64, is_primary=True, auto_id=True)
         schema.add_field(field_name='text', datatype=DataType.VARCHAR, max_length=6000, enable_analyzer=True,
-                         analyzer_params={"tokenizer": "jieba", "filter": ["cnalphanumonly"]})
+                         analyzer_params={"tokenizer": "standard", "filter": ["lowercase", {"type": "stop", "stop_words": ["_english_"]}]})
         schema.add_field(field_name='category', datatype=DataType.VARCHAR, max_length=1000)
         schema.add_field(field_name='source', datatype=DataType.VARCHAR, max_length=1000)
         schema.add_field(field_name='filename', datatype=DataType.VARCHAR, max_length=1000)

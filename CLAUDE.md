@@ -41,7 +41,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
   - Legacy/internal: `OPENAI_API_KEY`, `OPENAI_API_BASE`, `QWEN_BASE_URL`, `TAVILY_API_KEY`.
   - External API stack (used by `llm_models/api_llm.py` and the FastAPI service): `API_LLM_BASE_URL` / `API_LLM_API_KEY` / `API_LLM_MODEL` (glm-5 via tokenhub.tencentmaas.com), `API_EMBEDDING_BASE_URL` / `API_EMBEDDING_API_KEY` / `API_EMBEDDING_MODEL` (Qwen3-Embedding-8B via api-inference.modelscope.cn).
 - `utils/env_utils.py` reads `MILVUS_URI` (default `http://localhost:19530`) and `COLLECTION_NAME` (default `t_collection01`) from env, so `docker-compose.yml` overrides `MILVUS_URI=http://host.docker.internal:19530` to reach the host-local Milvus from inside the container.
-- Ollama embedding endpoint is in `llm_models/embeddings_model.py` (`http://100.112.63.27:11434`) — used only by ingestion.
+- Ollama embedding endpoint is in `llm_models/embeddings_model.py` (`http://localhost:11434`, model `dengcao/Qwen3-Embedding-8B:Q4_K_M`) — used only by ingestion.
 - Internal chat LLM endpoint is in `llm_models/all_llm.py`: `http://127.0.0.1:8088/v1` (Cursor-forwarded tunnel to an internal llama.cpp serving `qwen3.5`) — not used by the API path.
 - Key framework versions: `langchain-core 1.2.x`, `langchain-milvus 0.3.3`, `pymilvus 2.6.x`, `langgraph 1.1.x`.
 
@@ -52,12 +52,12 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 **LLM & Embeddings** (`llm_models/`)
 - `all_llm.py` — legacy/internal: exposes `model` and `llm` (both `ChatOpenAI` pointing at the llama.cpp tunnel). Also creates `web_search_tool` (TavilySearch). Used by graph1 / legacy ingestion.
 - `api_llm.py` — external API stack: exposes `model` (glm-5 via tokenhub.tencentmaas.com), `api_embeddings` (Qwen3-Embedding-8B via modelscope, dim=4096 — matches Milvus schema), and `web_search_tool`. All graph2 chains + the FastAPI service import from here.
-- `embeddings_model.py` — exposes `ollama_embeddings` (`qwen3-embedding:8b` via remote Ollama, accessed through the OpenAI-compatible `/v1/embeddings` endpoint). Used by ingestion only.
+- `embeddings_model.py` — exposes `ollama_embeddings` (`dengcao/Qwen3-Embedding-8B:Q4_K_M` via local Ollama on `localhost:11434`, OpenAI-compatible `/v1/embeddings` endpoint). Used by ingestion only.
 
 **Document Parsing & Ingestion** (`documents/`)
 - `markdown_parser.py` — parses Markdown with `UnstructuredMarkdownLoader` in `elements` mode, merges title+content via `merge_title_content`, then applies `SemanticChunker` for chunks > 8000 chars.
-- `pdf_parser.py` — OCR pipeline: `pypdfium2` renders each page → remote `glm-ocr:bf16` (via `curl` subprocess) produces Markdown → writes to a same-name `.md` next to the PDF (acts as OCR cache) → reuses `MarkdownParser` for chunking.
-- `milvus_db.py` — `MilvusVectorSave` manages a Milvus collection with dense (HNSW, dim=4096) + sparse BM25 (jieba tokenizer) vectors. Key methods: `create_collection()` (destructive rebuild), `ensure_collection()` (non-destructive), `create_connection()`, `add_documents()`, `get_existing_filenames()`.
+- `pdf_parser.py` — OCR pipeline: `pypdfium2` renders each page → local `dhiltgen/glm-ocr:bf16` on `localhost:11434` (via `curl --noproxy localhost` subprocess) produces Markdown → writes to a same-name `.md` next to the PDF (acts as OCR cache) → reuses `MarkdownParser` for chunking.
+- `milvus_db.py` — `MilvusVectorSave` manages a Milvus collection with dense (HNSW, dim=4096) + sparse BM25 (standard tokenizer + lowercase + English stopwords) vectors. Key methods: `create_collection()` (destructive rebuild), `ensure_collection()` (non-destructive), `create_connection()`, `add_documents()`, `get_existing_filenames()`.
 - `write_milvus.py` / `write_pdf_milvus.py` — multi-process producer-consumer pipelines with `--rebuild` / `--dir` CLI flags.
 
 **Retrieval Tools** (`tools/`)
@@ -68,7 +68,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 **LangGraph Workflows** — two self-correcting RAG pipelines:
 - `graph/` (Graph 1 — Corrective RAG): `agent_node` → tool retrieval → `grade_documents` → branch to `generate` or `rewrite` → END. Uses message-based `AgentState`.
-- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with `question` / `documents` / `generation` / `generate_retry_count` / `transform_count`. `generate_retry_count` caps hallucination retries at `MAX_GENERATE_RETRIES = 2` and falls back to `useful` to prevent infinite loops. All grader chains use `with_structured_output(..., method="function_calling")` because glm-5 doesn't support `json_schema` response format.
+- `graph2/` (Graph 2 — Adaptive RAG): `route_question` (vectorstore vs web_search) → `retrieve` → `grade_documents` → `decide_to_generate` → `generate` → hallucination check + answer grading → loop or END. Uses `GraphState` with `question` / `documents` / `generation` / `generate_retry_count` / `transform_count`. `generate_retry_count` caps hallucination retries at `MAX_GENERATE_RETRIES = 2` and falls back to `useful` to prevent infinite loops. All grader chains use `with_structured_output(..., method="function_calling")` because glm-5 doesn't support `json_schema` response format. The `retrieve` node translates Chinese queries to English via LLM before hitting Milvus (corpus is English-only), keeping `state["question"]` in Chinese for downstream generation.
 
 **HTTP Service** (`api/`)
 - `api/schemas.py` — Pydantic models: `QueryRequest` (question), `QueryResponse` (answer + route + documents + error), `HealthResponse`.
@@ -84,7 +84,7 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 ### Data Flow
 
-1. PDFs → OCR (`glm-ocr:bf16`) → Markdown cache → element extraction → title-content merge → semantic chunking → Milvus (dense + sparse).
+1. PDFs → OCR (`dhiltgen/glm-ocr:bf16` on local Ollama) → Markdown cache → element extraction → title-content merge → semantic chunking → Milvus (dense + sparse).
 2. User query → agent / graph → Milvus hybrid retrieval (RRF) → (grading / rewrite loop) → generation → response.
 
 ## Known Workarounds
@@ -100,5 +100,5 @@ Ingestion is incremental by default: `ensure_collection()` creates the collectio
 
 - All code comments and log strings are in Chinese.
 - Logging uses `loguru` via `utils/log_utils.py` — import as `from utils.log_utils import log`.
-- The Milvus schema uses a jieba tokenizer with `cnalphanumonly` filter for BM25; text field max length is 6000 chars.
+- The Milvus schema uses a `standard` tokenizer + `lowercase` + English stopword filter for BM25 (optimized for English biomedical corpus); text field max length is 6000 chars.
 - Document metadata convention: `category` field distinguishes `Title`, `content`, `NarrativeText`, `UncategorizedText`; the `merge_title_content` pattern builds hierarchical title→content relationships using `parent_id`/`element_id`.
