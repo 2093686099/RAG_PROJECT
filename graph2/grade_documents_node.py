@@ -22,6 +22,10 @@ def grade_documents(state):
         score = retrieval_grader_chain.invoke(
             {"question": question, "document": d.page_content}
         )
+        if score is None:
+            # glm-5 偶发不发 tool call，function_calling parser 返回 None；保守丢弃
+            log.warning("---GRADE: 评分器返回 None（无 tool call），按不相关丢弃---")
+            continue
         grade = score.binary_score  # 获取二元评分结果
         if grade == "yes":
             log.info("---GRADE: 打印相关标识---")  # 打印相关标识

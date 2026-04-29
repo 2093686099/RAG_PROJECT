@@ -63,7 +63,12 @@ def grade_generation_v_documents_and_questiono(state):
         "documents": _format_docs_for_grading(documents),
         "generation": generation
     })
-    grade = score.binary_score
+    if score is None:
+        # glm-5 偶发不发 tool call，按"基于文档"放行避免无谓重试
+        log.warning("---幻觉评分器返回 None（无 tool call），按通过处理---")
+        grade = "yes"
+    else:
+        grade = score.binary_score
 
     if grade == "yes":
         log.info("---生成内容基于文档---")
@@ -72,6 +77,9 @@ def grade_generation_v_documents_and_questiono(state):
             "question": question,
             "generation": generation
         })
+        if score is None:
+            log.warning("---回答评分器返回 None（无 tool call），按 useful 处理---")
+            return "useful"
         grade = score.binary_score
         if grade == "yes":
             log.info("---生成回答与问题匹配度高---")
@@ -126,6 +134,11 @@ def route_question(state):
     question = state["question"]
     source = question_router_chain.invoke({"question": question})
 
+    if source is None:
+        # glm-5 偶发不发 tool call，function_calling parser 返回 None；默认走向量库
+        log.warning("---路由器返回 None（无 tool call），默认走 vectorstore---")
+        return "retrieve"
+
     # 根据路由结果决定下一个节点
     if source.datasource == "web_search":
         log.info("---路由到网络搜索---")
@@ -133,6 +146,9 @@ def route_question(state):
     elif source.datasource == "vectorstore":
         log.info("---路由到文档检索---")
         return "retrieve"
+    # 兜底：未知 datasource 默认走向量库
+    log.warning(f"---未知 datasource={source.datasource}，默认走 vectorstore---")
+    return "retrieve"
 
 
 workflow = StateGraph(GraphState)

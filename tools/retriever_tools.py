@@ -19,5 +19,5 @@ retriever = mv.vector_store_saved.as_retriever(
 retriever_tool = create_retriever_tool(
     retriever,
     'rag_retriever',
-    '搜索并返回关于‘半导体和芯片’的内容，内容涵盖：半导体和芯片的封装测试，光刻胶等'
+    '搜索并返回关于‘铁死亡’的内容，内容涵盖：铁死亡的机制，铁死亡的检测，铁死亡的药物，铁死亡的临床应用等'
 )
